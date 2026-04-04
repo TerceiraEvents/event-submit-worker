@@ -1,0 +1,6 @@
+name = "event-submit-worker"
+main = "src/index.js"
+compatibility_date = "2024-01-01"
+
+# The GITHUB_TOKEN must be set as a secret:
+#   npx wrangler secret put GITHUB_TOKEN
