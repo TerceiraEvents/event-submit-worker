@@ -115,8 +115,8 @@ async function handleSubmit(request, env) {
     return jsonResponse({ error: "Server misconfiguration: missing GitHub token." }, 500);
   }
 
-  const owner = "TerceiraEvents";
-  const repo = "Angraevents.github.io";
+  const owner = "ChrisRackauckas-Claude";
+  const repo = "TerceiraEventsFeedback";
 
   const issuePayload = {
     title: `Event Suggestion: ${data.name}`,
