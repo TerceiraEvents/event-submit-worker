@@ -162,6 +162,102 @@ async function handleSubmit(request, env) {
   }, 201);
 }
 
+function buildFlagBody(data) {
+  const lines = [];
+  lines.push("## Edit Suggestion");
+  lines.push("");
+  lines.push("**Event:** " + data.eventName);
+  if (data.eventDate) lines.push("**Date:** " + data.eventDate);
+  if (data.eventVenue) lines.push("**Venue:** " + data.eventVenue);
+  lines.push("");
+  lines.push("### What needs to change");
+  lines.push("");
+  lines.push(data.reason);
+  if (data.submitterName) {
+    lines.push("");
+    lines.push("---");
+    lines.push("*Reported by: " + data.submitterName + "*");
+  }
+  return lines.join("\n");
+}
+
+async function handleFlag(request, env) {
+  // --- Rate limiting (shared counter) ---
+  const ip = request.headers.get("CF-Connecting-IP") || "unknown";
+  if (isRateLimited(ip)) {
+    return jsonResponse({ error: "Rate limit exceeded. Try again in a minute." }, 429);
+  }
+
+  let data;
+  try {
+    data = await request.json();
+  } catch {
+    return jsonResponse({ error: "Invalid JSON body." }, 400);
+  }
+
+  // Honeypot
+  if (data.website && String(data.website).trim() !== "") {
+    return jsonResponse({ success: true, issueUrl: null, issueNumber: null }, 200);
+  }
+
+  // Validate
+  const missing = [];
+  for (const field of ["eventName", "reason"]) {
+    if (!data[field] || typeof data[field] !== "string" || data[field].trim() === "") {
+      missing.push(field);
+    }
+  }
+  if (missing.length > 0) {
+    return jsonResponse({ error: `Missing required fields: ${missing.join(", ")}` }, 400);
+  }
+
+  // Trim
+  for (const key of Object.keys(data)) {
+    if (typeof data[key] === "string") {
+      data[key] = data[key].trim();
+    }
+  }
+
+  const token = env.GITHUB_TOKEN;
+  if (!token) {
+    return jsonResponse({ error: "Server misconfiguration: missing GitHub token." }, 500);
+  }
+
+  const owner = "TerceiraEvents";
+  const repo = "TerceiraEventsFeedback";
+
+  const dateSuffix = data.eventDate ? ` (${data.eventDate})` : "";
+  const issuePayload = {
+    title: `Edit Suggestion: ${data.eventName}${dateSuffix}`,
+    body: buildFlagBody(data),
+    labels: ["event-edit"],
+  };
+
+  const ghResponse = await fetch(`https://api.github.com/repos/${owner}/${repo}/issues`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/vnd.github+json",
+      "User-Agent": "event-submit-worker",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(issuePayload),
+  });
+
+  if (!ghResponse.ok) {
+    const detail = await ghResponse.text();
+    console.error(`GitHub API error ${ghResponse.status}: ${detail}`);
+    return jsonResponse({ error: "Failed to create GitHub issue." }, 502);
+  }
+
+  const issue = await ghResponse.json();
+  return jsonResponse({
+    success: true,
+    issueUrl: issue.html_url,
+    issueNumber: issue.number,
+  }, 201);
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -173,6 +269,10 @@ export default {
 
     if (url.pathname === "/submit-event" && request.method === "POST") {
       return handleSubmit(request, env);
+    }
+
+    if (url.pathname === "/flag-event" && request.method === "POST") {
+      return handleFlag(request, env);
     }
 
     return jsonResponse({ error: "Not found." }, 404);
