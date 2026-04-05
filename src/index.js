@@ -155,17 +155,86 @@ async function handleSubmit(request, env) {
   }, 201);
 }
 
+// --- Image upload handler ---
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024; // 5 MB
+const ALLOWED_IMAGE_TYPES = {
+  "image/jpeg": "jpg",
+  "image/png": "png",
+  "image/webp": "webp",
+  "image/gif": "gif",
+};
+
+function randomId(length = 16) {
+  const bytes = new Uint8Array(length);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+async function handleImageUpload(request, env) {
+  // --- Rate limiting (shared with submit-event) ---
+  const ip = request.headers.get("CF-Connecting-IP") || "unknown";
+  if (isRateLimited(ip)) {
+    return jsonResponse({ error: "Rate limit exceeded. Try again in a minute." }, 429);
+  }
+
+  if (!env.EVENT_IMAGES) {
+    return jsonResponse({ error: "Server misconfiguration: R2 bucket not bound." }, 500);
+  }
+
+  const contentType = request.headers.get("Content-Type") || "";
+  if (!ALLOWED_IMAGE_TYPES[contentType]) {
+    return jsonResponse({
+      error: "Unsupported image type. Use JPEG, PNG, WebP, or GIF.",
+    }, 400);
+  }
+
+  const contentLength = parseInt(request.headers.get("Content-Length") || "0", 10);
+  if (contentLength > MAX_IMAGE_BYTES) {
+    return jsonResponse({ error: "Image too large. Max 5 MB." }, 413);
+  }
+
+  const buffer = await request.arrayBuffer();
+  if (buffer.byteLength === 0) {
+    return jsonResponse({ error: "Empty upload." }, 400);
+  }
+  if (buffer.byteLength > MAX_IMAGE_BYTES) {
+    return jsonResponse({ error: "Image too large. Max 5 MB." }, 413);
+  }
+
+  const ext = ALLOWED_IMAGE_TYPES[contentType];
+  const key = `events/${randomId()}.${ext}`;
+
+  await env.EVENT_IMAGES.put(key, buffer, {
+    httpMetadata: { contentType },
+  });
+
+  const publicBase = env.R2_PUBLIC_URL || "";
+  const url = publicBase ? `${publicBase.replace(/\/$/, "")}/${key}` : key;
+
+  return jsonResponse({ success: true, url, key }, 201);
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
     // CORS preflight
     if (request.method === "OPTIONS") {
-      return new Response(null, { status: 204, headers: CORS_HEADERS });
+      return new Response(null, {
+        status: 204,
+        headers: {
+          ...CORS_HEADERS,
+          "Access-Control-Allow-Headers": "Content-Type",
+        },
+      });
     }
 
     if (url.pathname === "/submit-event" && request.method === "POST") {
       return handleSubmit(request, env);
+    }
+
+    if (url.pathname === "/upload-image" && request.method === "POST") {
+      return handleImageUpload(request, env);
     }
 
     return jsonResponse({ error: "Not found." }, 404);

@@ -4,3 +4,17 @@ compatibility_date = "2024-01-01"
 
 # The GITHUB_TOKEN must be set as a secret:
 #   npx wrangler secret put GITHUB_TOKEN
+
+# R2 bucket for event image uploads.
+# Create the bucket first:
+#   npx wrangler r2 bucket create terceira-events-images
+[[r2_buckets]]
+binding = "EVENT_IMAGES"
+bucket_name = "terceira-events-images"
+
+# Public URL base for serving R2 objects. Set this after enabling
+# public access on the bucket. Either the r2.dev development URL
+# or a custom domain.
+# Example: https://pub-<hash>.r2.dev
+[vars]
+R2_PUBLIC_URL = "https://pub-REPLACE_ME.r2.dev"
