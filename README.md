@@ -1,6 +1,6 @@
 # event-submit-worker
 
-Cloudflare Worker that proxies event suggestions from the Terceira Events mobile app into GitHub Issues on `ChrisRackauckas-Claude/TerceiraEventsFeedback`.
+Cloudflare Worker that proxies event suggestions from the Terceira Events mobile app into GitHub Issues on `TerceiraEvents/TerceiraEventsFeedback`.
 
 ## Setup
 
@@ -16,7 +16,7 @@ npm install
 npx wrangler secret put GITHUB_TOKEN
 ```
 
-3. Make sure the target repository (`ChrisRackauckas-Claude/TerceiraEventsFeedback`) has an `event-suggestion` label created.
+3. Make sure the target repository (`TerceiraEvents/TerceiraEventsFeedback`) has an `event-suggestion` label created.
 
 ## Development
 
@@ -58,7 +58,7 @@ npm run deploy
 ```json
 {
   "success": true,
-  "issueUrl": "https://github.com/ChrisRackauckas-Claude/TerceiraEventsFeedback/issues/42",
+  "issueUrl": "https://github.com/TerceiraEvents/TerceiraEventsFeedback/issues/42",
   "issueNumber": 42
 }
 ```
