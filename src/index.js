@@ -83,6 +83,11 @@ async function handleSubmit(request, env) {
     return jsonResponse({ error: "Invalid JSON body." }, 400);
   }
 
+  // --- Honeypot: silently drop if filled (bot indicator) ---
+  if (data.website && String(data.website).trim() !== "") {
+    return jsonResponse({ success: true, issueUrl: null, issueNumber: null }, 200);
+  }
+
   // --- Validate required fields ---
   const missing = [];
   for (const field of ["name", "date", "venue"]) {
