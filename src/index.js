@@ -1,3 +1,5 @@
+import { normalizeSubmissionTags } from "./tags.js";
+
 // In-memory rate limit store. Resets when the worker is evicted, which is
 // acceptable for basic abuse protection.  Keys are IP addresses, values are
 // arrays of request timestamps (epoch ms) within the current window.
@@ -36,15 +38,9 @@ function jsonResponse(body, status = 200) {
   });
 }
 
-export function normalizeKidFriendly(v) {
-  if (v === undefined || v === null) return false;
-  if (v === true) return true;
-  if (typeof v === "string") return /^(true|on|1|yes)$/i.test(v.trim());
-  return false;
-}
-
 export function buildIssueBody(data) {
   const lines = [];
+  const tags = Array.isArray(data.tags) ? data.tags : [];
 
   lines.push("## Event Suggestion");
   lines.push("");
@@ -56,7 +52,7 @@ export function buildIssueBody(data) {
   if (data.description) lines.push(`**Description:** ${data.description}`);
   if (data.instagram) lines.push(`**Instagram:** ${data.instagram}`);
   if (data.image) lines.push(`**Image:** ${data.image}`);
-  if (data.kid_friendly) lines.push(`**Kid Friendly:** yes`);
+  if (tags.length) lines.push(`**Tags:** ${tags.join(", ")}`);
   if (data.submitterName) lines.push(`**Submitted by:** ${data.submitterName}`);
 
   if (data.image) {
@@ -78,7 +74,10 @@ export function buildIssueBody(data) {
   if (data.description) lines.push(`  description: "${data.description}"`);
   if (data.instagram) lines.push(`  instagram: "${data.instagram}"`);
   if (data.image) lines.push(`  image: "${data.image}"`);
-  if (data.kid_friendly) lines.push(`  kid_friendly: true`);
+  if (tags.length) {
+    lines.push(`  tags:`);
+    for (const t of tags) lines.push(`    - ${t}`);
+  }
   lines.push("```");
 
   return lines.join("\n");
@@ -122,8 +121,10 @@ async function handleSubmit(request, env) {
     }
   }
 
-  // Normalize kid_friendly: accept boolean true, or string "true"/"on"/"1"/"yes"
-  data.kid_friendly = normalizeKidFriendly(data.kid_friendly);
+  // Normalize tags (accepts array, comma-separated string, or legacy
+  // kid_friendly boolean). Unknown tags are dropped, duplicates collapsed.
+  data.tags = normalizeSubmissionTags(data);
+  delete data.kid_friendly;
 
   // --- Basic format validation ---
   if (!/^\d{4}-\d{2}-\d{2}$/.test(data.date)) {

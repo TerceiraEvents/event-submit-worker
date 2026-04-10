@@ -1,57 +1,111 @@
 // Unit tests for the event-submit-worker helpers.
-// Run with: node --test test/index.test.js
+// Run with: node --test "test/**/*.test.js"
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { normalizeKidFriendly, buildIssueBody } from "../src/index.js";
+import { buildIssueBody } from "../src/index.js";
+import { normalizeSubmissionTags, VALID_TAG_SLUGS } from "../src/tags.js";
 
-test("normalizeKidFriendly: boolean true", () => {
-  assert.equal(normalizeKidFriendly(true), true);
+test("normalizeSubmissionTags: undefined -> []", () => {
+  assert.deepEqual(normalizeSubmissionTags({}), []);
+  assert.deepEqual(normalizeSubmissionTags(null), []);
+  assert.deepEqual(normalizeSubmissionTags(undefined), []);
 });
 
-test("normalizeKidFriendly: boolean false", () => {
-  assert.equal(normalizeKidFriendly(false), false);
+test("normalizeSubmissionTags: array of known slugs passes through", () => {
+  assert.deepEqual(
+    normalizeSubmissionTags({ tags: ["kid-friendly", "cinema"] }),
+    ["kid-friendly", "cinema"],
+  );
 });
 
-test("normalizeKidFriendly: missing -> false", () => {
-  assert.equal(normalizeKidFriendly(undefined), false);
-  assert.equal(normalizeKidFriendly(null), false);
+test("normalizeSubmissionTags: unknown tags are dropped", () => {
+  assert.deepEqual(
+    normalizeSubmissionTags({ tags: ["kid-friendly", "made-up-tag", "cinema"] }),
+    ["kid-friendly", "cinema"],
+  );
 });
 
-test('normalizeKidFriendly: common truthy strings', () => {
-  for (const v of ["true", "TRUE", "True", "on", "1", "yes", "  true  "]) {
-    assert.equal(normalizeKidFriendly(v), true, `expected "${v}" -> true`);
-  }
+test("normalizeSubmissionTags: comma-separated string input", () => {
+  assert.deepEqual(
+    normalizeSubmissionTags({ tags: "kid-friendly, cinema, free" }),
+    ["kid-friendly", "cinema", "free"],
+  );
 });
 
-test("normalizeKidFriendly: falsy strings stay false", () => {
-  for (const v of ["false", "0", "no", "", "maybe", "off"]) {
-    assert.equal(normalizeKidFriendly(v), false, `expected "${v}" -> false`);
-  }
+test("normalizeSubmissionTags: case and whitespace normalized", () => {
+  assert.deepEqual(
+    normalizeSubmissionTags({ tags: ["  Kid-Friendly  ", "CINEMA"] }),
+    ["kid-friendly", "cinema"],
+  );
 });
 
-test("buildIssueBody: includes Kid Friendly line when flag set", () => {
+test("normalizeSubmissionTags: duplicates collapsed, order preserved", () => {
+  assert.deepEqual(
+    normalizeSubmissionTags({ tags: ["cinema", "kid-friendly", "cinema"] }),
+    ["cinema", "kid-friendly"],
+  );
+});
+
+test("normalizeSubmissionTags: legacy kid_friendly=true merges kid-friendly", () => {
+  assert.deepEqual(
+    normalizeSubmissionTags({ kid_friendly: true }),
+    ["kid-friendly"],
+  );
+  assert.deepEqual(
+    normalizeSubmissionTags({ kid_friendly: "true" }),
+    ["kid-friendly"],
+  );
+  assert.deepEqual(
+    normalizeSubmissionTags({ kid_friendly: "on" }),
+    ["kid-friendly"],
+  );
+});
+
+test("normalizeSubmissionTags: kid_friendly + tags de-duped", () => {
+  assert.deepEqual(
+    normalizeSubmissionTags({
+      kid_friendly: true,
+      tags: ["cinema", "kid-friendly"],
+    }),
+    ["cinema", "kid-friendly"],
+  );
+});
+
+test("normalizeSubmissionTags: non-array non-string tags ignored", () => {
+  assert.deepEqual(normalizeSubmissionTags({ tags: { foo: "bar" } }), []);
+  assert.deepEqual(normalizeSubmissionTags({ tags: 42 }), []);
+});
+
+test("VALID_TAG_SLUGS includes kid-friendly and core music tags", () => {
+  assert.ok(VALID_TAG_SLUGS.has("kid-friendly"));
+  assert.ok(VALID_TAG_SLUGS.has("live-music"));
+  assert.ok(VALID_TAG_SLUGS.has("cinema"));
+  assert.ok(!VALID_TAG_SLUGS.has("nonsense"));
+});
+
+test("buildIssueBody: renders Tags line and YAML list", () => {
   const body = buildIssueBody({
     name: "Family Movie Night",
     date: "2026-07-04",
     venue: "CCCAH",
-    kid_friendly: true,
+    tags: ["kid-friendly", "cinema"],
   });
-  assert.match(body, /\*\*Kid Friendly:\*\* yes/);
-  assert.match(body, /kid_friendly: true/);
+  assert.match(body, /\*\*Tags:\*\* kid-friendly, cinema/);
+  assert.match(body, /tags:\n\s*- kid-friendly\n\s*- cinema/);
 });
 
-test("buildIssueBody: omits Kid Friendly line when flag unset", () => {
+test("buildIssueBody: omits Tags when none set", () => {
   const body = buildIssueBody({
-    name: "Late-Night Metal",
+    name: "Late Metal Night",
     date: "2026-07-04",
     venue: "AMIT",
   });
-  assert.ok(!/Kid Friendly/.test(body));
-  assert.ok(!/kid_friendly/.test(body));
+  assert.ok(!/Tags/.test(body));
+  assert.ok(!/^\s*tags:/m.test(body));
 });
 
-test("buildIssueBody: still produces required fields", () => {
+test("buildIssueBody: required fields always present", () => {
   const body = buildIssueBody({
     name: "Test Event",
     date: "2026-07-04",
