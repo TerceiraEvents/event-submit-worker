@@ -48,7 +48,8 @@ npm run deploy
 | date           | yes      | Event date (YYYY-MM-DD)    |
 | time           | no       | Event time (HH:MM)         |
 | venue          | yes      | Venue name                 |
-| address        | no       | Venue address              |
+| address        | no       | Venue street address       |
+| map_url        | no       | Google Maps URL (full http(s) link, e.g. a `maps.app.goo.gl/...` short link) |
 | description    | no       | Event description          |
 | instagram      | no       | Instagram link             |
 | submitterName  | no       | Who submitted the event    |

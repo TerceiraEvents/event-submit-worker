@@ -115,3 +115,26 @@ test("buildIssueBody: required fields always present", () => {
   assert.match(body, /\*\*Date:\*\* 2026-07-04/);
   assert.match(body, /\*\*Venue:\*\* Some Venue/);
 });
+
+test("buildIssueBody: includes map_url in metadata and YAML when set", () => {
+  const body = buildIssueBody({
+    name: "Strawberry Picking",
+    date: "2026-04-18",
+    venue: "Sabores da Horta",
+    address: "Canada do Saco, 9760-123",
+    map_url: "https://maps.app.goo.gl/abc123",
+  });
+  assert.match(body, /\*\*Map:\*\* https:\/\/maps\.app\.goo\.gl\/abc123/);
+  assert.match(body, /map_url: "https:\/\/maps\.app\.goo\.gl\/abc123"/);
+});
+
+test("buildIssueBody: omits map_url lines when not set", () => {
+  const body = buildIssueBody({
+    name: "Test Event",
+    date: "2026-07-04",
+    venue: "Some Venue",
+    address: "Some Street 1",
+  });
+  assert.ok(!/\*\*Map:\*\*/.test(body));
+  assert.ok(!/map_url:/.test(body));
+});
