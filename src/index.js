@@ -49,6 +49,7 @@ export function buildIssueBody(data) {
   if (data.time) lines.push(`**Time:** ${data.time}`);
   lines.push(`**Venue:** ${data.venue}`);
   if (data.address) lines.push(`**Address:** ${data.address}`);
+  if (data.map_url) lines.push(`**Map:** ${data.map_url}`);
   if (data.description) lines.push(`**Description:** ${data.description}`);
   if (data.instagram) lines.push(`**Instagram:** ${data.instagram}`);
   if (data.image) lines.push(`**Image:** ${data.image}`);
@@ -71,6 +72,7 @@ export function buildIssueBody(data) {
   if (data.time) lines.push(`  time: "${data.time}"`);
   lines.push(`  venue: "${data.venue}"`);
   if (data.address) lines.push(`  address: "${data.address}"`);
+  if (data.map_url) lines.push(`  map_url: "${data.map_url}"`);
   if (data.description) lines.push(`  description: "${data.description}"`);
   if (data.instagram) lines.push(`  instagram: "${data.instagram}"`);
   if (data.image) lines.push(`  image: "${data.image}"`);
@@ -132,6 +134,9 @@ async function handleSubmit(request, env) {
   }
   if (data.time && !/^\d{2}:\d{2}$/.test(data.time)) {
     return jsonResponse({ error: "Invalid time format. Use HH:MM." }, 400);
+  }
+  if (data.map_url && !/^https?:\/\//i.test(data.map_url)) {
+    return jsonResponse({ error: "Invalid map_url. Must be a full http(s) URL." }, 400);
   }
 
   // --- Create GitHub issue ---
