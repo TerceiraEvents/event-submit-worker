@@ -56,7 +56,13 @@ export function buildEventYaml(data) {
   const tags = Array.isArray(data.tags) ? data.tags : [];
   const lines = [];
   lines.push(`- name: "${data.name}"`);
-  lines.push(`  date: "${data.date}"`);
+  // Emit the date unquoted so YAML parses it as a Date, matching the rest of
+  // _data/special_events.yml. A mixed String/Date collection crashes the site
+  // build because archive.md / special.md / calendar.md all do
+  // `sort: "date"`, and Liquid can't compare heterogeneous types.
+  // The validator upstream already constrains data.date to YYYY-MM-DD, so the
+  // unquoted form is safe.
+  lines.push(`  date: ${data.date}`);
   if (data.time) lines.push(`  time: "${data.time}"`);
   lines.push(`  venue: "${data.venue}"`);
   if (data.address) lines.push(`  address: "${data.address}"`);
