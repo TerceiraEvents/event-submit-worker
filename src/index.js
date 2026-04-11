@@ -38,7 +38,44 @@ function jsonResponse(body, status = 200) {
   });
 }
 
-export function buildIssueBody(data) {
+// ---- Site repo constants ---------------------------------------------------
+
+const SITE_OWNER = "TerceiraEvents";
+const SITE_REPO = "TerceiraEvents.github.io";
+const SITE_BASE_BRANCH = "main";
+const EVENTS_FILE_PATH = "_data/special_events.yml";
+
+const FEEDBACK_OWNER = "TerceiraEvents";
+const FEEDBACK_REPO = "TerceiraEventsFeedback";
+
+// ---- Helpers: YAML snippet and PR body ------------------------------------
+
+// The YAML list-item that will be appended to _data/special_events.yml.
+// Exported for unit tests.
+export function buildEventYaml(data) {
+  const tags = Array.isArray(data.tags) ? data.tags : [];
+  const lines = [];
+  lines.push(`- name: "${data.name}"`);
+  lines.push(`  date: "${data.date}"`);
+  if (data.time) lines.push(`  time: "${data.time}"`);
+  lines.push(`  venue: "${data.venue}"`);
+  if (data.address) lines.push(`  address: "${data.address}"`);
+  if (data.map_url) lines.push(`  map_url: "${data.map_url}"`);
+  if (data.description) lines.push(`  description: "${data.description}"`);
+  if (data.instagram) lines.push(`  instagram: "${data.instagram}"`);
+  if (data.image) lines.push(`  image: "${data.image}"`);
+  if (tags.length) {
+    lines.push(`  tags:`);
+    for (const t of tags) lines.push(`    - ${t}`);
+  }
+  return lines.join("\n");
+}
+
+// Human-readable PR body: the submission metadata summary followed by a
+// short note about provenance. The YAML shows up in the diff view, so we
+// don't need to re-embed it here.
+// Exported for unit tests.
+export function buildPrBody(data) {
   const lines = [];
   const tags = Array.isArray(data.tags) ? data.tags : [];
 
@@ -64,26 +101,154 @@ export function buildIssueBody(data) {
   lines.push("");
   lines.push("---");
   lines.push("");
-  lines.push("### Ready-to-paste YAML for `special_events.yml`");
-  lines.push("");
-  lines.push("```yaml");
-  lines.push(`- name: "${data.name}"`);
-  lines.push(`  date: "${data.date}"`);
-  if (data.time) lines.push(`  time: "${data.time}"`);
-  lines.push(`  venue: "${data.venue}"`);
-  if (data.address) lines.push(`  address: "${data.address}"`);
-  if (data.map_url) lines.push(`  map_url: "${data.map_url}"`);
-  if (data.description) lines.push(`  description: "${data.description}"`);
-  if (data.instagram) lines.push(`  instagram: "${data.instagram}"`);
-  if (data.image) lines.push(`  image: "${data.image}"`);
-  if (tags.length) {
-    lines.push(`  tags:`);
-    for (const t of tags) lines.push(`    - ${t}`);
-  }
-  lines.push("```");
+  lines.push(
+    "Auto-generated from the suggest-an-event form. Please review dates, venue, and description before merging.",
+  );
 
   return lines.join("\n");
 }
+
+// Lowercase, collapse non-alphanumerics to dashes, trim, clamp length.
+// Exported for unit tests.
+export function slugify(s, maxLen = 40) {
+  const slug = String(s || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, maxLen)
+    .replace(/-+$/g, "");
+  return slug || "event";
+}
+
+// Short random hex suffix for branch uniqueness. Uses Workers' crypto.
+function randomHex(nChars = 6) {
+  const bytes = new Uint8Array(Math.ceil(nChars / 2));
+  crypto.getRandomValues(bytes);
+  let out = "";
+  for (const b of bytes) out += b.toString(16).padStart(2, "0");
+  return out.slice(0, nChars);
+}
+
+// Build a unique branch name for the PR. Exported for tests.
+export function buildBranchName(data, randomSuffix) {
+  const suffix = randomSuffix || randomHex(6);
+  return `event-suggestion/${data.date}-${slugify(data.name, 40)}-${suffix}`;
+}
+
+// ---- Base64 helpers (UTF-8 safe, Workers-friendly) ------------------------
+
+function utf8ToBase64(s) {
+  const bytes = new TextEncoder().encode(s);
+  let bin = "";
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  return btoa(bin);
+}
+
+function base64ToUtf8(b64) {
+  const clean = String(b64 || "").replace(/\s+/g, "");
+  const bin = atob(clean);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new TextDecoder().decode(bytes);
+}
+
+// ---- GitHub API wrapper ---------------------------------------------------
+
+async function ghRequest(env, method, path, body) {
+  const token = env.GITHUB_TOKEN;
+  if (!token) {
+    const err = new Error("Missing GITHUB_TOKEN");
+    err.status = 500;
+    throw err;
+  }
+  const resp = await fetch(`https://api.github.com${path}`, {
+    method,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/vnd.github+json",
+      "User-Agent": "event-submit-worker",
+      "Content-Type": "application/json",
+    },
+    body: body == null ? undefined : JSON.stringify(body),
+  });
+  if (!resp.ok) {
+    const detail = await resp.text();
+    const err = new Error(`GitHub ${method} ${path} -> ${resp.status}: ${detail}`);
+    err.status = resp.status;
+    throw err;
+  }
+  // Some endpoints (e.g. 204 No Content) have empty bodies.
+  if (resp.status === 204) return null;
+  return resp.json();
+}
+
+// ---- Create PR on site repo -----------------------------------------------
+
+// Orchestrates: resolve main HEAD → create branch → fetch file → append
+// snippet → commit on branch via Contents API → open PR. Returns the PR
+// payload from GitHub.
+async function createEventPr(env, data) {
+  // 1. Resolve main's HEAD commit SHA.
+  const mainRef = await ghRequest(
+    env,
+    "GET",
+    `/repos/${SITE_OWNER}/${SITE_REPO}/git/ref/heads/${SITE_BASE_BRANCH}`,
+  );
+  const mainSha = mainRef.object.sha;
+
+  // 2. Create a unique branch off main.
+  const branch = buildBranchName(data);
+  await ghRequest(
+    env,
+    "POST",
+    `/repos/${SITE_OWNER}/${SITE_REPO}/git/refs`,
+    { ref: `refs/heads/${branch}`, sha: mainSha },
+  );
+
+  // 3. Fetch the current events file on main (content + blob sha).
+  const fileMeta = await ghRequest(
+    env,
+    "GET",
+    `/repos/${SITE_OWNER}/${SITE_REPO}/contents/${EVENTS_FILE_PATH}?ref=${encodeURIComponent(SITE_BASE_BRANCH)}`,
+  );
+  const currentContent = base64ToUtf8(fileMeta.content);
+
+  // 4. Append the new snippet, separated by a blank line.
+  let next = currentContent;
+  if (next.length > 0 && !next.endsWith("\n")) next += "\n";
+  if (!next.endsWith("\n\n")) next += "\n";
+  next += buildEventYaml(data) + "\n";
+
+  // 5. Commit the updated file on the new branch.
+  const commitMessage = `Add event: ${data.name}`;
+  await ghRequest(
+    env,
+    "PUT",
+    `/repos/${SITE_OWNER}/${SITE_REPO}/contents/${EVENTS_FILE_PATH}`,
+    {
+      message: commitMessage,
+      content: utf8ToBase64(next),
+      sha: fileMeta.sha,
+      branch,
+    },
+  );
+
+  // 6. Open the PR.
+  const pr = await ghRequest(
+    env,
+    "POST",
+    `/repos/${SITE_OWNER}/${SITE_REPO}/pulls`,
+    {
+      title: `Add event: ${data.name}`,
+      head: branch,
+      base: SITE_BASE_BRANCH,
+      body: buildPrBody(data),
+    },
+  );
+  return pr;
+}
+
+// ---- /submit-event handler ------------------------------------------------
 
 async function handleSubmit(request, env) {
   // --- Rate limiting ---
@@ -102,7 +267,7 @@ async function handleSubmit(request, env) {
 
   // --- Honeypot: silently drop if filled (bot indicator) ---
   if (data.website && String(data.website).trim() !== "") {
-    return jsonResponse({ success: true, issueUrl: null, issueNumber: null }, 200);
+    return jsonResponse({ success: true, prUrl: null, prNumber: null }, 200);
   }
 
   // --- Validate required fields ---
@@ -139,46 +304,29 @@ async function handleSubmit(request, env) {
     return jsonResponse({ error: "Invalid map_url. Must be a full http(s) URL." }, 400);
   }
 
-  // --- Create GitHub issue ---
-  const token = env.GITHUB_TOKEN;
-  if (!token) {
+  if (!env.GITHUB_TOKEN) {
     return jsonResponse({ error: "Server misconfiguration: missing GitHub token." }, 500);
   }
 
-  const owner = "TerceiraEvents";
-  const repo = "TerceiraEventsFeedback";
-
-  const issuePayload = {
-    title: `Event Suggestion: ${data.name}`,
-    body: buildIssueBody(data),
-    labels: ["event-suggestion"],
-  };
-
-  const ghResponse = await fetch(`https://api.github.com/repos/${owner}/${repo}/issues`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      Accept: "application/vnd.github+json",
-      "User-Agent": "event-submit-worker",
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(issuePayload),
-  });
-
-  if (!ghResponse.ok) {
-    const detail = await ghResponse.text();
-    console.error(`GitHub API error ${ghResponse.status}: ${detail}`);
-    return jsonResponse({ error: "Failed to create GitHub issue." }, 502);
+  let pr;
+  try {
+    pr = await createEventPr(env, data);
+  } catch (err) {
+    console.error(err && err.message ? err.message : String(err));
+    return jsonResponse({ error: "Failed to create GitHub pull request." }, 502);
   }
 
-  const issue = await ghResponse.json();
-
-  return jsonResponse({
-    success: true,
-    issueUrl: issue.html_url,
-    issueNumber: issue.number,
-  }, 201);
+  return jsonResponse(
+    {
+      success: true,
+      prUrl: pr.html_url,
+      prNumber: pr.number,
+    },
+    201,
+  );
 }
+
+// ---- /flag-event handler (edit suggestions stay as issues) ----------------
 
 function buildFlagBody(data) {
   const lines = [];
@@ -236,13 +384,9 @@ async function handleFlag(request, env) {
     }
   }
 
-  const token = env.GITHUB_TOKEN;
-  if (!token) {
+  if (!env.GITHUB_TOKEN) {
     return jsonResponse({ error: "Server misconfiguration: missing GitHub token." }, 500);
   }
-
-  const owner = "TerceiraEvents";
-  const repo = "TerceiraEventsFeedback";
 
   const dateSuffix = data.eventDate ? ` (${data.eventDate})` : "";
   const issuePayload = {
@@ -251,29 +395,27 @@ async function handleFlag(request, env) {
     labels: ["event-edit"],
   };
 
-  const ghResponse = await fetch(`https://api.github.com/repos/${owner}/${repo}/issues`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      Accept: "application/vnd.github+json",
-      "User-Agent": "event-submit-worker",
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(issuePayload),
-  });
-
-  if (!ghResponse.ok) {
-    const detail = await ghResponse.text();
-    console.error(`GitHub API error ${ghResponse.status}: ${detail}`);
+  let issue;
+  try {
+    issue = await ghRequest(
+      env,
+      "POST",
+      `/repos/${FEEDBACK_OWNER}/${FEEDBACK_REPO}/issues`,
+      issuePayload,
+    );
+  } catch (err) {
+    console.error(err && err.message ? err.message : String(err));
     return jsonResponse({ error: "Failed to create GitHub issue." }, 502);
   }
 
-  const issue = await ghResponse.json();
-  return jsonResponse({
-    success: true,
-    issueUrl: issue.html_url,
-    issueNumber: issue.number,
-  }, 201);
+  return jsonResponse(
+    {
+      success: true,
+      issueUrl: issue.html_url,
+      issueNumber: issue.number,
+    },
+    201,
+  );
 }
 
 export default {

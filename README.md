@@ -1,6 +1,9 @@
 # event-submit-worker
 
-Cloudflare Worker that proxies event suggestions from the Terceira Events mobile app into GitHub Issues on `TerceiraEvents/TerceiraEventsFeedback`.
+Cloudflare Worker that proxies event submissions from the website form and the Terceira Events mobile app into GitHub:
+
+- `POST /submit-event` — opens a pull request on `TerceiraEvents/TerceiraEvents.github.io` that appends the new event to `_data/special_events.yml`. A human merges the PR to publish the event.
+- `POST /flag-event` — opens an `event-edit` issue on `TerceiraEvents/TerceiraEventsFeedback` so a maintainer can manually update an existing entry.
 
 ## Setup
 
@@ -10,13 +13,18 @@ Cloudflare Worker that proxies event suggestions from the Terceira Events mobile
 npm install
 ```
 
-2. Set the GitHub personal access token as a Worker secret. The token needs the `repo` scope (or `public_repo` if the target repo is public):
+2. Set the GitHub personal access token as a Worker secret. The token needs write access to **both** repos the worker touches:
+
+   - `TerceiraEvents/TerceiraEvents.github.io`: Contents: read/write, Pull requests: read/write (for `/submit-event`)
+   - `TerceiraEvents/TerceiraEventsFeedback`: Issues: read/write (for `/flag-event`)
+
+   A classic PAT with `repo` scope covers both. A fine-grained PAT must be configured for both repos with the permissions above.
 
 ```bash
 npx wrangler secret put GITHUB_TOKEN
 ```
 
-3. Make sure the target repository (`TerceiraEvents/TerceiraEventsFeedback`) has an `event-suggestion` label created.
+3. Make sure `TerceiraEvents/TerceiraEventsFeedback` has an `event-edit` label created (for the `/flag-event` path).
 
 ## Development
 
@@ -40,6 +48,8 @@ npm run deploy
 
 ### POST /submit-event
 
+Opens a pull request on `TerceiraEvents/TerceiraEvents.github.io` that appends the submitted event to `_data/special_events.yml` on a new branch (`event-suggestion/<date>-<slug>-<random>`). The PR still needs a human merge before the event shows up on the site.
+
 **Request body (JSON):**
 
 | Field          | Required | Description                |
@@ -52,6 +62,8 @@ npm run deploy
 | map_url        | no       | Google Maps URL (full http(s) link, e.g. a `maps.app.goo.gl/...` short link) |
 | description    | no       | Event description          |
 | instagram      | no       | Instagram link             |
+| image          | no       | Flyer/poster image URL     |
+| tags           | no       | Array of tag slugs         |
 | submitterName  | no       | Who submitted the event    |
 
 **Success response (201):**
@@ -59,8 +71,8 @@ npm run deploy
 ```json
 {
   "success": true,
-  "issueUrl": "https://github.com/TerceiraEvents/TerceiraEventsFeedback/issues/42",
-  "issueNumber": 42
+  "prUrl": "https://github.com/TerceiraEvents/TerceiraEvents.github.io/pull/42",
+  "prNumber": 42
 }
 ```
 

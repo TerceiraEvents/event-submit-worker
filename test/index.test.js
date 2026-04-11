@@ -3,7 +3,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { buildIssueBody } from "../src/index.js";
+import {
+  buildEventYaml,
+  buildPrBody,
+  slugify,
+  buildBranchName,
+} from "../src/index.js";
 import { normalizeSubmissionTags, VALID_TAG_SLUGS } from "../src/tags.js";
 
 test("normalizeSubmissionTags: undefined -> []", () => {
@@ -84,40 +89,141 @@ test("VALID_TAG_SLUGS includes kid-friendly and core music tags", () => {
   assert.ok(!VALID_TAG_SLUGS.has("nonsense"));
 });
 
-test("buildIssueBody: renders Tags line and YAML list", () => {
-  const body = buildIssueBody({
+// ---- buildEventYaml --------------------------------------------------------
+
+test("buildEventYaml: required fields in list-item form", () => {
+  const snippet = buildEventYaml({
+    name: "Test Event",
+    date: "2026-07-04",
+    venue: "Some Venue",
+  });
+  assert.match(snippet, /^- name: "Test Event"$/m);
+  assert.match(snippet, /^  date: "2026-07-04"$/m);
+  assert.match(snippet, /^  venue: "Some Venue"$/m);
+});
+
+test("buildEventYaml: renders tags list under the item", () => {
+  const snippet = buildEventYaml({
     name: "Family Movie Night",
     date: "2026-07-04",
     venue: "CCCAH",
     tags: ["kid-friendly", "cinema"],
   });
-  assert.match(body, /\*\*Tags:\*\* kid-friendly, cinema/);
-  assert.match(body, /tags:\n\s*- kid-friendly\n\s*- cinema/);
+  assert.match(snippet, /tags:\n\s*- kid-friendly\n\s*- cinema/);
 });
 
-test("buildIssueBody: omits Tags when none set", () => {
-  const body = buildIssueBody({
+test("buildEventYaml: omits tags key when none set", () => {
+  const snippet = buildEventYaml({
     name: "Late Metal Night",
     date: "2026-07-04",
     venue: "AMIT",
   });
-  assert.ok(!/Tags/.test(body));
-  assert.ok(!/^\s*tags:/m.test(body));
+  assert.ok(!/^\s*tags:/m.test(snippet));
 });
 
-test("buildIssueBody: required fields always present", () => {
-  const body = buildIssueBody({
-    name: "Test Event",
+test("buildEventYaml: optional fields appear only when present", () => {
+  const withAll = buildEventYaml({
+    name: "N",
     date: "2026-07-04",
-    venue: "Some Venue",
+    venue: "V",
+    time: "21:00",
+    address: "A",
+    description: "D",
+    instagram: "https://ig/x",
+    image: "https://img/x.jpg",
   });
-  assert.match(body, /\*\*Name:\*\* Test Event/);
-  assert.match(body, /\*\*Date:\*\* 2026-07-04/);
-  assert.match(body, /\*\*Venue:\*\* Some Venue/);
+  assert.match(withAll, /^  time: "21:00"$/m);
+  assert.match(withAll, /^  address: "A"$/m);
+  assert.match(withAll, /^  description: "D"$/m);
+  assert.match(withAll, /^  instagram: "https:\/\/ig\/x"$/m);
+  assert.match(withAll, /^  image: "https:\/\/img\/x\.jpg"$/m);
+
+  const minimal = buildEventYaml({ name: "N", date: "2026-07-04", venue: "V" });
+  assert.ok(!/time:/.test(minimal));
+  assert.ok(!/address:/.test(minimal));
+  assert.ok(!/description:/.test(minimal));
+  assert.ok(!/instagram:/.test(minimal));
+  assert.ok(!/image:/.test(minimal));
 });
 
-test("buildIssueBody: includes map_url in metadata and YAML when set", () => {
-  const body = buildIssueBody({
+// ---- buildPrBody -----------------------------------------------------------
+
+test("buildPrBody: renders metadata summary and provenance note", () => {
+  const body = buildPrBody({
+    name: "Family Movie Night",
+    date: "2026-07-04",
+    venue: "CCCAH",
+    tags: ["kid-friendly", "cinema"],
+    submitterName: "Someone",
+  });
+  assert.match(body, /\*\*Name:\*\* Family Movie Night/);
+  assert.match(body, /\*\*Date:\*\* 2026-07-04/);
+  assert.match(body, /\*\*Venue:\*\* CCCAH/);
+  assert.match(body, /\*\*Tags:\*\* kid-friendly, cinema/);
+  assert.match(body, /\*\*Submitted by:\*\* Someone/);
+  assert.match(body, /Auto-generated from the suggest-an-event form/);
+});
+
+test("buildPrBody: omits Tags line when none set", () => {
+  const body = buildPrBody({
+    name: "Late Metal Night",
+    date: "2026-07-04",
+    venue: "AMIT",
+  });
+  assert.ok(!/\*\*Tags:\*\*/.test(body));
+});
+
+test("buildPrBody: embeds image markdown when image set", () => {
+  const body = buildPrBody({
+    name: "X",
+    date: "2026-07-04",
+    venue: "V",
+    image: "https://img/x.jpg",
+  });
+  assert.match(body, /!\[Event flyer\]\(https:\/\/img\/x\.jpg\)/);
+});
+
+// ---- slugify ---------------------------------------------------------------
+
+test("slugify: lowercases and dashes non-alphanumerics", () => {
+  assert.equal(slugify("Family Movie Night"), "family-movie-night");
+  assert.equal(slugify("ESCAMA: de dragão 2#"), "escama-de-drag-o-2");
+});
+
+test("slugify: trims and collapses consecutive dashes", () => {
+  assert.equal(slugify("  --Hello  World--  "), "hello-world");
+});
+
+test("slugify: clamps length and trims trailing dashes after clamp", () => {
+  const s = slugify("a".repeat(50) + " " + "b".repeat(50), 10);
+  assert.equal(s.length <= 10, true);
+  assert.ok(!s.endsWith("-"));
+});
+
+test("slugify: falls back to 'event' for empty input", () => {
+  assert.equal(slugify(""), "event");
+  assert.equal(slugify("!!!"), "event");
+  assert.equal(slugify(null), "event");
+  assert.equal(slugify(undefined), "event");
+});
+
+// ---- buildBranchName -------------------------------------------------------
+
+test("buildBranchName: contains date, slug and random suffix", () => {
+  const branch = buildBranchName(
+    { name: "Test Event", date: "2026-07-04" },
+    "abc123",
+  );
+  assert.equal(branch, "event-suggestion/2026-07-04-test-event-abc123");
+});
+
+test("buildBranchName: uses slug fallback for empty name", () => {
+  const branch = buildBranchName({ name: "", date: "2026-07-04" }, "deadbe");
+  assert.equal(branch, "event-suggestion/2026-07-04-event-deadbe");
+});
+
+test("buildPrBody: includes Map line when map_url set", () => {
+  const body = buildPrBody({
     name: "Strawberry Picking",
     date: "2026-04-18",
     venue: "Sabores da Horta",
@@ -125,16 +231,32 @@ test("buildIssueBody: includes map_url in metadata and YAML when set", () => {
     map_url: "https://maps.app.goo.gl/abc123",
   });
   assert.match(body, /\*\*Map:\*\* https:\/\/maps\.app\.goo\.gl\/abc123/);
-  assert.match(body, /map_url: "https:\/\/maps\.app\.goo\.gl\/abc123"/);
 });
 
-test("buildIssueBody: omits map_url lines when not set", () => {
-  const body = buildIssueBody({
+test("buildEventYaml: includes map_url when set", () => {
+  const snippet = buildEventYaml({
+    name: "Strawberry Picking",
+    date: "2026-04-18",
+    venue: "Sabores da Horta",
+    address: "Canada do Saco, 9760-123",
+    map_url: "https://maps.app.goo.gl/abc123",
+  });
+  assert.match(snippet, /^  map_url: "https:\/\/maps\.app\.goo\.gl\/abc123"$/m);
+});
+
+test("buildPrBody / buildEventYaml: omit map_url when not set", () => {
+  const body = buildPrBody({
+    name: "Test Event",
+    date: "2026-07-04",
+    venue: "Some Venue",
+    address: "Some Street 1",
+  });
+  const snippet = buildEventYaml({
     name: "Test Event",
     date: "2026-07-04",
     venue: "Some Venue",
     address: "Some Street 1",
   });
   assert.ok(!/\*\*Map:\*\*/.test(body));
-  assert.ok(!/map_url:/.test(body));
+  assert.ok(!/map_url:/.test(snippet));
 });
