@@ -1,0 +1,53 @@
+name: test and deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # Node 22 (current LTS). Node 20's `node --test` does not support
+          # glob patterns like `test/**/*.test.js`, which the package.json
+          # test script relies on; glob support was added in Node 21.
+          node-version: "22"
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm test
+
+  deploy:
+    needs: test
+    # Only deploy on push to main (not on PRs or manual runs from non-main).
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # Node 22 (current LTS). Node 20's `node --test` does not support
+          # glob patterns like `test/**/*.test.js`, which the package.json
+          # test script relies on; glob support was added in Node 21.
+          node-version: "22"
+          cache: npm
+
+      - run: npm ci
+
+      - name: Deploy to Cloudflare Workers
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
