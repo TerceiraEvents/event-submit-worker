@@ -98,7 +98,7 @@ test("buildEventYaml: required fields in list-item form", () => {
     venue: "Some Venue",
   });
   assert.match(snippet, /^- name: "Test Event"$/m);
-  assert.match(snippet, /^  date: "2026-07-04"$/m);
+  assert.match(snippet, /^  date: 2026-07-04$/m);
   assert.match(snippet, /^  venue: "Some Venue"$/m);
 });
 
