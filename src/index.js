@@ -1,4 +1,5 @@
 import { normalizeSubmissionTags } from "./tags.js";
+import { rehostImage, RehostError } from "./rehost.js";
 
 // In-memory rate limit store. Resets when the worker is evicted, which is
 // acceptable for basic abuse protection.  Keys are IP addresses, values are
@@ -312,6 +313,36 @@ async function handleSubmit(request, env) {
 
   if (!env.GITHUB_TOKEN) {
     return jsonResponse({ error: "Server misconfiguration: missing GitHub token." }, 500);
+  }
+
+  // Re-host the image as a release asset before opening the PR.
+  // Submitters paste whatever URL they have (Facebook CDN, Instagram,
+  // random Discord attachments) and those rot within days. We fetch
+  // the bytes now and replace data.image with a permanent GitHub URL
+  // so the YAML entry never ships a rotting URL. See site repo
+  // issue #66 (what we lost) and #67 (pipeline design).
+  if (data.image) {
+    const ghJson = (method, path, body) => ghRequest(env, method, path, body);
+    try {
+      data.image = await rehostImage({
+        sourceUrl: data.image,
+        slug: data.name,
+        date: data.date,
+        token: env.GITHUB_TOKEN,
+        ghJson,
+      });
+    } catch (err) {
+      console.error(
+        "rehost failed:",
+        err && err.message ? err.message : String(err),
+      );
+      const isClientProblem = err instanceof RehostError && err.status < 500;
+      const status = isClientProblem ? 400 : 502;
+      const message = isClientProblem
+        ? `Couldn't re-host the image (${err.message}). Please use a different image URL — a GitHub issue attachment or a direct Instagram image works best.`
+        : "Failed to re-host the image (upstream error). Please try again.";
+      return jsonResponse({ error: message }, status);
+    }
   }
 
   let pr;
