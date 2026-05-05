@@ -2,7 +2,7 @@
 //
 // Submitters paste whatever image URL they have — Facebook CDN, Instagram,
 // random Discord attachments — and those URLs rot within days. See
-// EventosTerceira#66 for the motivation and #67 for the full
+// EventosTerceira.pt#66 for the motivation and #67 for the full
 // pipeline design. This module downloads the submitted image and uploads
 // it as a GitHub release asset on a long-lived release (tag:
 // `event-images`), so the URL that ends up in `_data/special_events.yml`
@@ -20,7 +20,7 @@
 // (`fetch`, `crypto.subtle`) rather than pulling in npm deps.
 
 const SITE_OWNER = "TerceiraEvents";
-const SITE_REPO = "EventosTerceira";
+const SITE_REPO = "EventosTerceira.pt";
 
 export const REHOST_RELEASE_TAG = "event-images";
 

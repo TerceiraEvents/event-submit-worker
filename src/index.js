@@ -42,7 +42,7 @@ function jsonResponse(body, status = 200) {
 // ---- Site repo constants ---------------------------------------------------
 
 const SITE_OWNER = "TerceiraEvents";
-const SITE_REPO = "EventosTerceira";
+const SITE_REPO = "EventosTerceira.pt";
 const SITE_BASE_BRANCH = "main";
 const EVENTS_FILE_PATH = "_data/special_events.yml";
 
