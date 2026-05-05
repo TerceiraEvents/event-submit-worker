@@ -1,7 +1,7 @@
 // Shared tag vocabulary for special events.
 //
 // Keep this list in sync with:
-//   - TerceiraEvents.github.io   _data/event_tags.yml
+//   - EventosTerceira.pt _data/event_tags.yml
 //   - TerceiraEventsApp          src/utils/tags.js
 
 export const VALID_TAG_SLUGS = new Set([
