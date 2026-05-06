@@ -260,3 +260,118 @@ test("buildPrBody / buildEventYaml: omit map_url when not set", () => {
   assert.ok(!/\*\*Map:\*\*/.test(body));
   assert.ok(!/map_url:/.test(snippet));
 });
+
+// ---- Locale handling -------------------------------------------------------
+
+test("buildEventYaml: lang=en emits name_en sibling alongside bare name", () => {
+  const snippet = buildEventYaml({
+    name: "Family Movie Night",
+    date: "2026-07-04",
+    venue: "CCCAH",
+    description: "Animated film for kids.",
+    lang: "en",
+  });
+  assert.match(snippet, /^- name: "Family Movie Night"$/m);
+  assert.match(snippet, /^  name_en: "Family Movie Night"$/m);
+  assert.match(snippet, /^  description: "Animated film for kids\."$/m);
+  assert.match(snippet, /^  description_en: "Animated film for kids\."$/m);
+  assert.ok(!/name_pt:/.test(snippet));
+  assert.ok(!/description_pt:/.test(snippet));
+});
+
+test("buildEventYaml: lang=pt emits name_pt and description_pt siblings", () => {
+  const snippet = buildEventYaml({
+    name: "Concerto Double Trouble",
+    date: "2026-07-04",
+    venue: "Lar Doce Livro",
+    description: "Concerto ao vivo.",
+    lang: "pt",
+  });
+  assert.match(snippet, /^- name: "Concerto Double Trouble"$/m);
+  assert.match(snippet, /^  name_pt: "Concerto Double Trouble"$/m);
+  assert.match(snippet, /^  description_pt: "Concerto ao vivo\."$/m);
+  assert.ok(!/name_en:/.test(snippet));
+});
+
+test("buildEventYaml: name_other / description_other land in opposite-locale fields", () => {
+  const snippet = buildEventYaml({
+    name: "Concerto Double Trouble",
+    name_other: "Double Trouble Concert",
+    date: "2026-07-04",
+    venue: "Lar Doce Livro",
+    description: "Concerto ao vivo.",
+    description_other: "Live concert.",
+    lang: "pt",
+  });
+  assert.match(snippet, /^  name_pt: "Concerto Double Trouble"$/m);
+  assert.match(snippet, /^  name_en: "Double Trouble Concert"$/m);
+  assert.match(snippet, /^  description_pt: "Concerto ao vivo\."$/m);
+  assert.match(snippet, /^  description_en: "Live concert\."$/m);
+});
+
+test("buildEventYaml: missing/invalid lang defaults to en (back-compat)", () => {
+  const snippetMissing = buildEventYaml({
+    name: "X",
+    date: "2026-07-04",
+    venue: "V",
+  });
+  assert.match(snippetMissing, /^  name_en: "X"$/m);
+  assert.ok(!/name_pt:/.test(snippetMissing));
+
+  const snippetGarbage = buildEventYaml({
+    name: "X",
+    date: "2026-07-04",
+    venue: "V",
+    lang: "fr",
+  });
+  assert.match(snippetGarbage, /^  name_en: "X"$/m);
+});
+
+test("buildEventYaml: yaml-quotes embedded double quotes and backslashes safely", () => {
+  const snippet = buildEventYaml({
+    name: 'She said "hi" and went home',
+    date: "2026-07-04",
+    venue: "Somewhere",
+    description: 'Path: C:\\Users — quote: "ok".',
+    lang: "en",
+  });
+  // Embedded quotes are backslash-escaped (not unbalanced) and literal
+  // backslashes are doubled per the YAML double-quoted scalar grammar.
+  assert.ok(
+    snippet.includes('- name: "She said \\"hi\\" and went home"'),
+    `quoting failed: ${snippet}`,
+  );
+  assert.ok(
+    snippet.includes('  description: "Path: C:\\\\Users — quote: \\"ok\\"."'),
+    `quoting failed: ${snippet}`,
+  );
+});
+
+test("buildEventYaml: yaml-quotes folds newlines in submitted text", () => {
+  const snippet = buildEventYaml({
+    name: "X",
+    date: "2026-07-04",
+    venue: "V",
+    description: "Line one.\nLine two.",
+    lang: "en",
+  });
+  assert.ok(
+    snippet.includes('  description: "Line one. Line two."'),
+    `newline-fold failed: ${snippet}`,
+  );
+});
+
+test("buildPrBody: includes submission language line and other-locale fields when set", () => {
+  const body = buildPrBody({
+    name: "Concerto Double Trouble",
+    name_other: "Double Trouble Concert",
+    date: "2026-07-04",
+    venue: "Lar Doce Livro",
+    description: "Concerto ao vivo.",
+    description_other: "Live concert.",
+    lang: "pt",
+  });
+  assert.match(body, /\*\*Submission language:\*\* pt/);
+  assert.match(body, /\*\*Name \(en\):\*\* Double Trouble Concert/);
+  assert.match(body, /\*\*Description \(en\):\*\* Live concert\./);
+});

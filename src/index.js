@@ -51,12 +51,42 @@ const FEEDBACK_REPO = "TerceiraEventsFeedback";
 
 // ---- Helpers: YAML snippet and PR body ------------------------------------
 
+// Escape a value for a YAML double-quoted scalar. Submitted text comes from
+// users so we have to handle backslashes and embedded quotes — the existing
+// `"${data.name}"` interpolation would corrupt the file on input like
+// `She said "hi"`. Newlines are folded to spaces; the YAML grammar for
+// double-quoted strings allows escapes but Jekyll's _data scalars are
+// single-line in practice and a folded form keeps diffs clean.
+function yamlQuote(s) {
+  const folded = String(s).replace(/[\r\n]+/g, " ");
+  const escaped = folded.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  return `"${escaped}"`;
+}
+
 // The YAML list-item that will be appended to _data/special_events.yml.
+//
+// Locale model: the bare `name` / `description` fields hold the text in the
+// submitter's locale (data.lang) and act as a fallback for the OTHER locale
+// until a curator fills in a translation. `name_<lang>` / `description_<lang>`
+// are emitted as the canonical localized fields. If the submitter provided an
+// `name_other` / `description_other` translation, those land in the
+// opposite-locale slots so the entry renders correctly on both pages.
+//
+// This mirrors PR #128 in EventosTerceira.pt, which retroactively added
+// `_pt` / `_en` siblings with a bare-field fallback. Templates resolve via
+// `event.name_<page_lang> | default: event.name`.
+//
 // Exported for unit tests.
 export function buildEventYaml(data) {
   const tags = Array.isArray(data.tags) ? data.tags : [];
+  const lang = data.lang === "pt" ? "pt" : "en";
+  const otherLang = lang === "pt" ? "en" : "pt";
   const lines = [];
-  lines.push(`- name: "${data.name}"`);
+  lines.push(`- name: ${yamlQuote(data.name)}`);
+  lines.push(`  name_${lang}: ${yamlQuote(data.name)}`);
+  if (data.name_other) {
+    lines.push(`  name_${otherLang}: ${yamlQuote(data.name_other)}`);
+  }
   // Emit the date unquoted so YAML parses it as a Date, matching the rest of
   // _data/special_events.yml. A mixed String/Date collection crashes the site
   // build because archive.md / special.md / calendar.md all do
@@ -64,13 +94,19 @@ export function buildEventYaml(data) {
   // The validator upstream already constrains data.date to YYYY-MM-DD, so the
   // unquoted form is safe.
   lines.push(`  date: ${data.date}`);
-  if (data.time) lines.push(`  time: "${data.time}"`);
-  lines.push(`  venue: "${data.venue}"`);
-  if (data.address) lines.push(`  address: "${data.address}"`);
-  if (data.map_url) lines.push(`  map_url: "${data.map_url}"`);
-  if (data.description) lines.push(`  description: "${data.description}"`);
-  if (data.instagram) lines.push(`  instagram: "${data.instagram}"`);
-  if (data.image) lines.push(`  image: "${data.image}"`);
+  if (data.time) lines.push(`  time: ${yamlQuote(data.time)}`);
+  lines.push(`  venue: ${yamlQuote(data.venue)}`);
+  if (data.address) lines.push(`  address: ${yamlQuote(data.address)}`);
+  if (data.map_url) lines.push(`  map_url: ${yamlQuote(data.map_url)}`);
+  if (data.description) {
+    lines.push(`  description: ${yamlQuote(data.description)}`);
+    lines.push(`  description_${lang}: ${yamlQuote(data.description)}`);
+    if (data.description_other) {
+      lines.push(`  description_${otherLang}: ${yamlQuote(data.description_other)}`);
+    }
+  }
+  if (data.instagram) lines.push(`  instagram: ${yamlQuote(data.instagram)}`);
+  if (data.image) lines.push(`  image: ${yamlQuote(data.image)}`);
   if (tags.length) {
     lines.push(`  tags:`);
     for (const t of tags) lines.push(`    - ${t}`);
@@ -86,15 +122,26 @@ export function buildPrBody(data) {
   const lines = [];
   const tags = Array.isArray(data.tags) ? data.tags : [];
 
+  const lang = data.lang === "pt" ? "pt" : "en";
+
   lines.push("## Event Suggestion");
   lines.push("");
+  lines.push(`**Submission language:** ${lang}`);
   lines.push(`**Name:** ${data.name}`);
+  if (data.name_other) {
+    const otherLang = lang === "pt" ? "en" : "pt";
+    lines.push(`**Name (${otherLang}):** ${data.name_other}`);
+  }
   lines.push(`**Date:** ${data.date}`);
   if (data.time) lines.push(`**Time:** ${data.time}`);
   lines.push(`**Venue:** ${data.venue}`);
   if (data.address) lines.push(`**Address:** ${data.address}`);
   if (data.map_url) lines.push(`**Map:** ${data.map_url}`);
   if (data.description) lines.push(`**Description:** ${data.description}`);
+  if (data.description_other) {
+    const otherLang = lang === "pt" ? "en" : "pt";
+    lines.push(`**Description (${otherLang}):** ${data.description_other}`);
+  }
   if (data.instagram) lines.push(`**Instagram:** ${data.instagram}`);
   if (data.image) lines.push(`**Image:** ${data.image}`);
   if (tags.length) lines.push(`**Tags:** ${tags.join(", ")}`);
@@ -299,6 +346,12 @@ async function handleSubmit(request, env) {
   // kid_friendly boolean). Unknown tags are dropped, duplicates collapsed.
   data.tags = normalizeSubmissionTags(data);
   delete data.kid_friendly;
+
+  // Locale: only "en" / "pt" are supported. Anything else (including the
+  // legacy no-lang shape used before the bilingual launch) is treated as
+  // English, which preserves the original behavior for callers that haven't
+  // been updated.
+  data.lang = data.lang === "pt" ? "pt" : "en";
 
   // --- Basic format validation ---
   if (!/^\d{4}-\d{2}-\d{2}$/.test(data.date)) {
